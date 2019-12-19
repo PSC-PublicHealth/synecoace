@@ -6,12 +6,13 @@ import pandas as pd
 import scipy.stats
 import matplotlib.pyplot as plt
 from matplotlib.legend_handler import HandlerTuple
-import cPickle as pickle
+import pickle as pickle
 
-from sampling import mkSamps, whichBin
+from sampling import mkSamps
 
-def mutualInfo(sampVX, sampVY):
-    assert len(sampVX) == len(sampVY), 'Sample vector lengths do not match'
+def mutualInfo(sampVX, sampVY, whichBin):
+    print('POINT 1')
+    #assert len(sampVX) == len(sampVY), 'Sample vector lengths do not match'
     binVX, nBinsX = whichBin(sampVX)
     binVY, nBinsY = whichBin(sampVY)
     assert nBinsX == nBinsY, 'Unexpectedly got different bin counts?'
@@ -26,7 +27,32 @@ def mutualInfo(sampVX, sampVY):
     oldErr = np.seterr(invalid='ignore', divide='ignore')
     prodA = pA * np.nan_to_num(np.log(pA / xyPA))  # element-wise calculation
     np.seterr(**oldErr)
+    print('POINT 2')
     return np.sum(prodA.ravel())
+
+
+########
+# This implementation (from stackoverflow) produces the same MI values as the one above
+# stackoverflow.com/questions/20491028/optimal-way-to-compute-pairwise-mutual-information-using-numpy
+########
+#from scipy.stats import chi2_contingency
+#
+#def calc_MI(x, y, bins):
+#    c_xy = np.histogram2d(x, y, bins)[0]
+#    g, p, dof, expected = chi2_contingency(c_xy, lambda_="log-likelihood")
+#    mi = 0.5 * g / c_xy.sum()
+#    return mi
+#
+#def mutualInfo(sampVX, sampVY):
+#    assert len(sampVX) == len(sampVY), 'Sample vector lengths do not match'
+#    binVX, nBinsX = whichBin(sampVX)
+#    binVY, nBinsY = whichBin(sampVY)
+#    assert nBinsX == nBinsY, 'Unexpectedly got different bin counts?'
+#    return calc_MI(binVX, binVY, nBinsX)
+#
+#print mutualInfo(sampX.values, sampY.values)
+#print mutualInfo(sampX.values, sampX.values)
+#print mutualInfo(sampY.values, sampY.values)
 
 
 def lnLik(samps1V, samps2V, wtSerV):
@@ -85,7 +111,7 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
         newLnLik = lnLikFun(newAlpha, **lnLikParams)
         #print 'newLnLik: ', newLnLik
         if verbose and (n % 100 == 0):
-            print '%s: %s' % (n, np.sum(newLnLik))
+            print('%s: %s' % (n, np.sum(newLnLik)))
         llDelta = newLnLik - oldLnLik
         llDelta = np.minimum(llDelta, 0.0)
         #choices = np.logical_or(newLnLik > oldLnLik,
