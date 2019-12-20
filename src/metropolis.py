@@ -2,17 +2,17 @@
 
 import sys
 import numpy as np
+import scipy.sparse as sp
 import pandas as pd
 import scipy.stats
 import matplotlib.pyplot as plt
 from matplotlib.legend_handler import HandlerTuple
 import pickle as pickle
 
-from sampling import mkSamps
+from sampling import mkSamps, toProbV
 
 def mutualInfo(sampVX, sampVY, whichBin):
-    print('POINT 1')
-    #assert len(sampVX) == len(sampVY), 'Sample vector lengths do not match'
+    assert len(sampVX) == len(sampVY), 'Sample vector lengths do not match'
     binVX, nBinsX = whichBin(sampVX)
     binVY, nBinsY = whichBin(sampVY)
     assert nBinsX == nBinsY, 'Unexpectedly got different bin counts?'
@@ -21,13 +21,12 @@ def mutualInfo(sampVX, sampVY, whichBin):
     np.add.at(cA.ravel(), idxV, np.ones(len(idxV), dtype=np.int32).ravel())
     pA = cA.astype(np.float32)
     pA /= sum(pA.ravel())
-    xPV = toProbV(sampVX)
-    yPV = toProbV(sampVY)
+    xPV = toProbV(sampVX, whichBin)
+    yPV = toProbV(sampVY, whichBin)
     xyPA = np.einsum('i,j->ij', xPV, yPV)  # einsum is my new favorite function
     oldErr = np.seterr(invalid='ignore', divide='ignore')
     prodA = pA * np.nan_to_num(np.log(pA / xyPA))  # element-wise calculation
     np.seterr(**oldErr)
-    print('POINT 2')
     return np.sum(prodA.ravel())
 
 
@@ -35,45 +34,45 @@ def mutualInfo(sampVX, sampVY, whichBin):
 # This implementation (from stackoverflow) produces the same MI values as the one above
 # stackoverflow.com/questions/20491028/optimal-way-to-compute-pairwise-mutual-information-using-numpy
 ########
-#from scipy.stats import chi2_contingency
-#
-#def calc_MI(x, y, bins):
-#    c_xy = np.histogram2d(x, y, bins)[0]
-#    g, p, dof, expected = chi2_contingency(c_xy, lambda_="log-likelihood")
-#    mi = 0.5 * g / c_xy.sum()
-#    return mi
-#
-#def mutualInfo(sampVX, sampVY):
-#    assert len(sampVX) == len(sampVY), 'Sample vector lengths do not match'
-#    binVX, nBinsX = whichBin(sampVX)
-#    binVY, nBinsY = whichBin(sampVY)
-#    assert nBinsX == nBinsY, 'Unexpectedly got different bin counts?'
-#    return calc_MI(binVX, binVY, nBinsX)
-#
+# from scipy.stats import chi2_contingency
+# 
+# def calc_MI(x, y, bins):
+#     c_xy = np.histogram2d(x, y, bins)[0]
+#     g, p, dof, expected = chi2_contingency(c_xy, lambda_="log-likelihood")
+#     mi = 0.5 * g / c_xy.sum()
+#     return mi
+# 
+# def mutualInfo(sampVX, sampVY, whichBin):
+#     #assert len(sampVX) == len(sampVY), 'Sample vector lengths do not match'
+#     binVX, nBinsX = whichBin(sampVX)
+#     binVY, nBinsY = whichBin(sampVY)
+#     assert nBinsX == nBinsY, 'Unexpectedly got different bin counts?'
+#     return calc_MI(binVX, binVY, nBinsX)
+
 #print mutualInfo(sampX.values, sampY.values)
 #print mutualInfo(sampX.values, sampX.values)
 #print mutualInfo(sampY.values, sampY.values)
 
 
-def lnLik(samps1V, samps2V, wtSerV):
-    """
-    funV has the right shape to fill the role of likelihood in the Metropolis algorithm.  We'll
-    take the log, and use it as a log likelihood.
-    """
-    #print 'lnLik samps1V', samps1V
-    #print 'samps2V', samps2V
-    #print 'wtSerV', wtSerV
-    wtA = wtSerV
-    #offset = samps1V.shape[1] - wtSer.shape[0]
-    offset = samps1V.shape[1] - wtSerV.shape[0]
-    #print 'offset', samps1V.shape, wtSerV.shape, offset
-    samp1A = samps1V[:, offset:]
-    #print 'samp1A', samp1A
-    samp2A = samps2V[:, offset:]
-    #print 'samp2A', samp2A
-    delta = samp1A - samp2A
-    delta *= delta
-    return np.asarray((-np.asmatrix(wtA) * np.asmatrix(delta).transpose())).reshape((-1, 1))
+# def lnLik(samps1V, samps2V, wtSerV):
+#     """
+#     funV has the right shape to fill the role of likelihood in the Metropolis algorithm.  We'll
+#     take the log, and use it as a log likelihood.
+#     """
+#     #print 'lnLik samps1V', samps1V
+#     #print 'samps2V', samps2V
+#     #print 'wtSerV', wtSerV
+#     wtA = wtSerV
+#     #offset = samps1V.shape[1] - wtSer.shape[0]
+#     offset = samps1V.shape[1] - wtSerV.shape[0]
+#     #print 'offset', samps1V.shape, wtSerV.shape, offset
+#     samp1A = samps1V[:, offset:]
+#     #print 'samp1A', samp1A
+#     samp2A = samps2V[:, offset:]
+#     #print 'samp2A', samp2A
+#     delta = samp1A - samp2A
+#     delta *= delta
+#     return np.asarray((-np.asmatrix(wtA) * np.asmatrix(delta).transpose())).reshape((-1, 1))
 
 
 def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator, mutatorParams,
@@ -104,12 +103,12 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
     A = [guess.values] # List of vectors of samples
     for n in range(nIter):
         oldAlpha  = A[-1]  # old parameter value as array
-        #print 'start: ', oldAlpha
+        print('start: ', oldAlpha)
         oldLnLik = lnLikFun(oldAlpha, **lnLikParams)
         newAlpha = mutator(oldAlpha, **mutatorParams)
-        #print 'newAlpha: ', newAlpha
+        print('newAlpha: ', newAlpha)
         newLnLik = lnLikFun(newAlpha, **lnLikParams)
-        #print 'newLnLik: ', newLnLik
+        print('newLnLik: ', newLnLik)
         if verbose and (n % 100 == 0):
             print('%s: %s' % (n, np.sum(newLnLik)))
         llDelta = newLnLik - oldLnLik
@@ -161,6 +160,27 @@ def genMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator, mu
         if idx % keepStep == 0:
             clean.append(sV)
     return clean
+
+
+def test_mi():
+    from sampling import createBinner, createSparseBinner
+    nSamp = 10000
+    sampXDF = pd.DataFrame({'A':np.random.randint(0,12,nSamp),
+                            'B':np.random.randint(0,7,nSamp),
+                            'C':np.random.randint(0,3,nSamp)})
+    sampYDF = pd.DataFrame({'A':np.random.randint(0,12,nSamp),
+                            'B':np.random.randint(0,7,nSamp),
+                            'C':np.random.randint(0,3,nSamp)})
+    binner = createBinner(['A', 'B', 'C'], {'A':12, 'B':7, 'C':3})
+    print(mutualInfo(sampXDF, sampYDF, binner))
+    binner = createSparseBinner(['A', 'B', 'C'], {'A':12, 'B':7, 'C':3})
+    print(mutualInfo(sampXDF, sampYDF, binner))
+
+def main():
+    test_mi()
+
+if __name__ == "__main__":
+    main()
 
 
 
