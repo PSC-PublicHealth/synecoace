@@ -96,6 +96,7 @@ def transformData(data):
     acesL.sort()
     for ace in acesL:
         massaged_data[ace] = (data[ace] == 1)
+    massaged_data['TOTACES'] = massaged_data[acesL].astype(int).sum()
     
     boolColL = ['DENTALCARE', 'VISIONCARE', 'SPORTSTEAMS', 'CLUBS', 'SC_CSHCN',
                 'BIRTHWT_VL', 'BIRTHWT_L', 'HHLANGUAGE_ENGLISH', 'HHLANGUAGE_SPANISH',
@@ -104,7 +105,7 @@ def transformData(data):
                 'SC_RACE_ISLANDS', 'SC_RACE_OTHER', 'SC_RACE_MIXED', 'SC_FEMALE']
     boolColL.sort()
 
-    scalarColL = ['FPL', 'BIRTHORDER', 'AGE', 'TOTCSHCN', 'TOTKIDS', 'MOMAGE']
+    scalarColL = ['FPL', 'BIRTHORDER', 'AGE', 'TOTCSHCN', 'TOTKIDS', 'MOMAGE', 'TOTACES']
     scalarColL.sort()
     
 #     print('Before transformation:')
@@ -172,7 +173,7 @@ def boolifyData(data, acesL, boolColL, scalarColL, fpl_mode='binned'):
             else:
                 raise RuntimeError('Unknown FPL_mode')
 
-        elif col == 'TOTSCHCN':
+        elif col == 'TOTCSHCN':
             intervals = pd.interval_range(start=0, periods=6, closed='left')
             bin_map = {val:idx for idx, val in enumerate(intervals)}
             x = pd.cut(data[col], intervals, labels=False)
@@ -199,5 +200,53 @@ def boolifyData(data, acesL, boolColL, scalarColL, fpl_mode='binned'):
     out_data = out_data1
 
     return out_data, acesL, boolColL, scalarColL
+
+
+def quantizeData(data, acesL, boolColL, scalarColL):
+    """
+    Things in acesL and boolColL are already boolean.  Must convert the values in scalarColL.
+    """
+    range_d = {}
+    colS = frozenset(acesL + boolColL + scalarColL)
+    rslt = data[[col for col in data.columns if col not in colS]].copy()
+    for col in acesL + boolColL:
+        rslt[col] = data[col].astype(int)
+        range_d[col] = 2
+
+    for col in scalarColL:
+        if col == 'MOMAGE':  # special case
+            rslt['MOMAGE_LT_20'] = (data[col] < 20).astype(int)
+            rslt['MOMAGE_GT_39'] = (data[col] > 39).astype(int)
+            boolColL = boolColL[:] + ['MOMAGE_LT_20', 'MOMAGE_GT_39']
+            range_d['MOMAGE_LT_20'] = 2
+            range_d['MOMAGE_GT_39'] = 2
+            
+        elif col == 'FPL':  # special case
+            intervals = pd.interval_range(start=0, periods=8, closed='left')
+            bin_map = {val:idx for idx, val in enumerate(intervals)}
+            x = pd.cut(0.01 * data['FPL'], intervals, labels=False)
+            rslt['FPL'] = x.apply(lambda y: bin_map[y] )
+            range_d['FPL'] = 8
+ 
+        elif col == 'TOTCSHCN':
+            intervals = pd.interval_range(start=0, periods=6, closed='left')
+            bin_map = {val:idx for idx, val in enumerate(intervals)}
+            x = pd.cut(data[col], intervals, labels=False)
+            rslt[col] = x.apply(lambda y: bin_map[y])
+            range_d[col] = 6
+ 
+        elif col == 'TOTACES':
+            rslt[col] = data[col]
+            range_d[col] = 9
+ 
+        else:
+            # All of these deal with number of kids, so minimum is 1
+            intervals = pd.interval_range(start=1, periods=5, closed='left')
+            bin_map = {val : idx for idx, val in enumerate(intervals)}
+            x = pd.cut(data[col], intervals, labels=False)
+            rslt[col + '_minusone'] = x.apply(lambda y: bin_map[y])
+            range_d[col + '_minusone'] = 5
+
+    return rslt, acesL, boolColL, scalarColL, range_d
 
 

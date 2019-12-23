@@ -11,10 +11,10 @@ import pickle as pickle
 
 from sampling import mkSamps, toProbV
 
-def mutualInfo(sampVX, sampVY, whichBin):
+def mutualInfo(sampVX, sampVY, whichBin, binnerParams={}):
     assert len(sampVX) == len(sampVY), 'Sample vector lengths do not match'
-    binVX, nBinsX = whichBin(sampVX)
-    binVY, nBinsY = whichBin(sampVY)
+    binVX, nBinsX = whichBin(sampVX, **binnerParams)
+    binVY, nBinsY = whichBin(sampVY, **binnerParams)
     assert nBinsX == nBinsY, 'Unexpectedly got different bin counts?'
     cA = np.zeros([nBinsX, nBinsX], dtype=np.int32)
     idxV = np.ravel_multi_index(np.array([binVX, binVY]), (nBinsX, nBinsX))
@@ -100,15 +100,16 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
     accepted  = np.zeros([nSamp, 1], dtype=np.int)
     onesV = np.ones([nSamp], dtype=np.int).reshape((-1, 1))
     zerosV = np.zeros([nSamp], dtype=np.int).reshape((-1, 1))
-    A = [guess.values] # List of vectors of samples
+    #A = [guess.values] # List of vectors of samples
+    A = [guess]
     for n in range(nIter):
         oldAlpha  = A[-1]  # old parameter value as array
-        print('start: ', oldAlpha)
+        #print('start: ', oldAlpha)
         oldLnLik = lnLikFun(oldAlpha, **lnLikParams)
         newAlpha = mutator(oldAlpha, **mutatorParams)
-        print('newAlpha: ', newAlpha)
+        #print('newAlpha: ', newAlpha)
         newLnLik = lnLikFun(newAlpha, **lnLikParams)
-        print('newLnLik: ', newLnLik)
+        #print('newLnLik: ', newLnLik)
         if verbose and (n % 100 == 0):
             print('%s: %s' % (n, np.sum(newLnLik)))
         llDelta = newLnLik - oldLnLik
@@ -116,9 +117,12 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
         #choices = np.logical_or(newLnLik > oldLnLik,
         #                        np.random.random(newLnLik.shape) < np.exp(newLnLik - oldLnLik))
         choices = np.logical_or(newLnLik > oldLnLik,
-                                np.random.random(newLnLik.shape) < np.exp(llDelta))
+                                np.random.random(newLnLik.shape) < np.exp(llDelta.astype(np.float)))
         rslt = np.choose(choices, [oldAlpha, newAlpha])
-        A.append(rslt)
+        rsltDF = pd.DataFrame(rslt, columns=oldAlpha.columns.copy())
+        #print('result: ')
+        #print(rsltDF.head())
+        A.append(rsltDF)
         accepted += np.choose(choices, [zerosV, onesV])
     acceptanceRate = accepted/float(nIter)
     return A, acceptanceRate
@@ -148,17 +152,28 @@ def genMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator, mu
     Returns:
         cleanSamps: a list of vectors of independent samples
     """
-    A, acceptanceRate = genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams,
-                                                mutator, mutatorParams, verbose=verbose)
-    #print acceptanceRate, nIter, (acceptanceRate * nIter).min()
-    nKeep = int((acceptanceRate * nIter).min() / mutationsPerSamp)
-    keepStep = nIter//nKeep
-    burnIn = burninMutations * keepStep
-    assert burnIn < nIter, 'Not enough iterations for burn-in (%s vs %s)' % (nIter, burnIn)
     clean = []
-    for idx, sV in enumerate(A[burnIn:]):
-        if idx % keepStep == 0:
-            clean.append(sV)
+    while True:
+        A, acceptanceRate = genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams,
+                                                    mutator, mutatorParams, verbose=verbose)
+        nKeep = int((acceptanceRate * nIter).min() / mutationsPerSamp)
+        if nKeep:
+            keepStep = nIter//nKeep
+            burnIn = burninMutations * keepStep
+            if burnIn >= nIter:
+                burninMutations -= nIter//keepStep
+                print("Not enough mutations for burn-in; acceptance rate %s; %d discards remain"
+                      % (acceptanceRate.min(), burninMutations))
+            else:
+                for idx, sV in enumerate(A[burnIn:]):
+                    if idx % keepStep == 0:
+                        clean.append(sV)
+                break
+        else:
+            print("NO GOOD MUTATIONS; acceptance rate %s; continuing"
+                  % acceptanceRate.min())
+            print(acceptanceRate.min(), nIter, (acceptanceRate * nIter).min())
+            nIter *= 2
     return clean
 
 
