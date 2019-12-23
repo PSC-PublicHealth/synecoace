@@ -10,6 +10,7 @@ from data_conversions import floatifyData, boolifyData, quantizeData
 from sampling import mkSamps, toHisto, toProbV
 from sampling import createSparseBinner as createBinner
 from metropolis import mutualInfo, genMetropolisSamples
+from mutator import FreshDrawMutator
 
 
 def select_subset(df, match_dct):
@@ -53,16 +54,6 @@ def lnLik(samps1V, samps2V, wtSerV):
     return np.asarray((-np.asmatrix(wtA) * np.asmatrix(delta).transpose())).reshape((-1, 1))
 
 
-def mutate(sampV, df, stepSzV):
-    """
-    Return a 'mutated' version of sampV, based on the given step sizes.  Unfortunately our samples
-    are discrete and come from a table, so I'm not sure how to do this unless we first generate
-    a proximity network of some sort, so for the moment let's just generate a new set of samples-
-    this corresponds to an infinitely wide mutator.
-    """
-    return mkSamps(df, len(sampV))
-
-
 # This function takes lnLik from the environment!
 def sampleAndCalcMI(wtSer, nSamp, nIter, sampler, testSampParams, genSampParams,
                     binner, binnerParams,
@@ -71,7 +62,7 @@ def sampleAndCalcMI(wtSer, nSamp, nIter, sampler, testSampParams, genSampParams,
     guess = sampler(**genSampParams)
     lnLikParams = {'samps2V': testSamps, 'wtSerV': wtSer}
     cleanSamps = genMetropolisSamples(nSamp, nIter, guess, lnLik, lnLikParams,
-                                      mutate, mutatorParams, verbose=verbose)
+                                      mutator, mutatorParams, verbose=verbose)
     if isinstance(cleanSamps[0], pd.DataFrame):
         cleanV = pd.concat(cleanSamps)
         expandedTestV = pd.concat([testSamps] * len(cleanSamps))
@@ -137,22 +128,7 @@ class Agent(object):
         wt_ser = createWeightSer(all_col_l, range_d=self.range_d)
         samples_subset = select_subset(new_all_samples, self.fixed_keys)
         print('samples_subset unique entries: ', new_all_samples.index.unique())
-        new_outer_cohort = self.samp_gen(samples_subset)
-        #print('inner cohort keys: ', self.inner_cohort.columns)
-        #print('outer cohort keys: ', self.outer_cohort.columns)
-#         print('old inner vs. outer: ', mutualInfo(self.inner_cohort, self.outer_cohort,
-#                                                   which_bin))
-#         print('old outer vs. new outer: ', mutualInfo(self.outer_cohort, new_outer_cohort,
-#                                                       which_bin))
-#         print('old inner vs. new outer: ', mutualInfo(self.inner_cohort, new_outer_cohort,
-#                                                       which_bin))
-#         print('old outer vs. old outer: ', mutualInfo(self.outer_cohort, self.outer_cohort,
-#                                                       which_bin))
-#         print('new outer vs. new outer: ', mutualInfo(new_outer_cohort, new_outer_cohort,
-#                                                       which_bin))
-#         print('lnLik: follows')
-#         print(lnLik(self.inner_cohort, new_outer_cohort, wt_ser))
-        
+        new_outer_cohort = self.samp_gen(samples_subset)        
         new_age = self.age + 1
         print('------------------')
         print('new outer cohort unique entries: ', new_outer_cohort.index.unique())
@@ -165,24 +141,26 @@ class Agent(object):
         testSampParams = {'df': self.inner_cohort}
         genSampParams = {'df': new_outer_cohort}
         binnerParams = {}
+        mutator = FreshDrawMutator()
         mutatorParams = {'stepSzV': stepsizes, 'df': new_outer_cohort}
     
         guess = wt_ser.values.copy()
-        rslt = minimize(minimizeMe, guess, (nSamp, nIter, all_col_l,
-                                            self.samp_gen,
-                                            testSampParams, genSampParams,
-                                            which_bin, binnerParams,
-                                            mutate, mutatorParams), method='powell')
-        print('------------------')
-        print('Optimization result:')
-        print(rslt)
-        print('------------------')
-
-        bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
+#         rslt = minimize(minimizeMe, guess, (nSamp, nIter, all_col_l,
+#                                             self.samp_gen,
+#                                             testSampParams, genSampParams,
+#                                             which_bin, binnerParams,
+#                                             mutator, mutatorParams), method='powell')
+#         print('------------------')
+#         print('Optimization result:')
+#         print(rslt)
+#         print('------------------')
+# 
+#         bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
+        bestWtSer = wt_ser
         lnLikParams = {'samps2V': self.inner_cohort, 'wtSerV': bestWtSer}
         cleanSamps = genMetropolisSamples(nSamp, nIter, self.samp_gen(**genSampParams), 
                                           lnLik, lnLikParams,
-                                          mutate, mutatorParams, verbose=True)
+                                          mutator, mutatorParams, verbose=True)
         if isinstance(cleanSamps[0], pd.DataFrame):
             newCleanV = pd.concat(cleanSamps)
         else:
