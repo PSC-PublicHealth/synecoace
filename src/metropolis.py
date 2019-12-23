@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 from matplotlib.legend_handler import HandlerTuple
 import pickle as pickle
 
-from sampling import mkSamps, toProbV
+from sampling import toProbV
+from mutator import Mutator
 
 def mutualInfo(sampVX, sampVY, whichBin, binnerParams={}):
     assert len(sampVX) == len(sampVY), 'Sample vector lengths do not match'
@@ -106,7 +107,7 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
         oldAlpha  = A[-1]  # old parameter value as array
         #print('start: ', oldAlpha)
         oldLnLik = lnLikFun(oldAlpha, **lnLikParams)
-        newAlpha = mutator(oldAlpha, **mutatorParams)
+        newAlpha = mutator.go(oldAlpha, **mutatorParams)
         #print('newAlpha: ', newAlpha)
         newLnLik = lnLikFun(newAlpha, **lnLikParams)
         #print('newLnLik: ', newLnLik)
