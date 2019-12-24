@@ -10,7 +10,7 @@ from data_conversions import floatifyData, boolifyData, quantizeData
 from sampling import mkSamps, toHisto, toProbV
 from sampling import createSparseBinner as createBinner
 from metropolis import mutualInfo, genMetropolisSamples
-from mutator import FreshDrawMutator
+from mutator import FreshDrawMutator, MSTMutator
 
 
 def select_subset(df, match_dct):
@@ -141,22 +141,23 @@ class Agent(object):
         testSampParams = {'df': self.inner_cohort}
         genSampParams = {'df': new_outer_cohort}
         binnerParams = {}
-        mutator = FreshDrawMutator()
+        #mutator = FreshDrawMutator()
+        mutator = MSTMutator(new_outer_cohort)
+        mutator.plot_tree()
         mutatorParams = {'stepSzV': stepsizes, 'df': new_outer_cohort}
     
-        guess = wt_ser.values.copy()
-#         rslt = minimize(minimizeMe, guess, (nSamp, nIter, all_col_l,
-#                                             self.samp_gen,
-#                                             testSampParams, genSampParams,
-#                                             which_bin, binnerParams,
-#                                             mutator, mutatorParams), method='powell')
-#         print('------------------')
-#         print('Optimization result:')
-#         print(rslt)
-#         print('------------------')
-# 
-#         bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
-        bestWtSer = wt_ser
+        rslt = minimize(minimizeMe, wt_ser.values.copy(),
+                        (nSamp, nIter, all_col_l,
+                         self.samp_gen,
+                         testSampParams, genSampParams,
+                         which_bin, binnerParams,
+                         mutator, mutatorParams), method='powell')
+        print('------------------')
+        print('Optimization result:')
+        print(rslt)
+        print('------------------')
+ 
+        bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
         lnLikParams = {'samps2V': self.inner_cohort, 'wtSerV': bestWtSer}
         cleanSamps = genMetropolisSamples(nSamp, nIter, self.samp_gen(**genSampParams), 
                                           lnLik, lnLikParams,

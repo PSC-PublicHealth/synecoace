@@ -13,16 +13,6 @@ from sampling import mkSamps
 from metropolis import mutualInfo, lnLik, genRawMetropolisSamples, genMetropolisSamples
 
 
-# Now we need a mutator
-def mutate(sampV, df, stepSzV):
-    """
-    Return a 'mutated' version of sampV, based on the given step sizes.  Unfortunately our samples
-    are discrete and come from a table, so I'm not sure how to do this unless we first generate
-    a proximity network of some sort, so for the moment let's just generate a new set of samples-
-    this corresponds to an infinitely wide mutator.
-    """
-    return mkSamps(df, len(sampV)).values
-
 def sampleAndCalcMI(wtSer, nSamp, nIter, sampler, testSampParams, genSampParams,
                     mutator, mutatorParams, lnLik,
                     drawGraph=False, verbose=False):
