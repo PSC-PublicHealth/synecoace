@@ -96,7 +96,7 @@ def transformData(data):
     acesL.sort()
     for ace in acesL:
         massaged_data[ace] = (data[ace] == 1)
-    massaged_data['TOTACES'] = massaged_data[acesL].astype(int).sum()
+    massaged_data['TOTACES'] = massaged_data[acesL].astype(int).sum(axis=1)
     
     boolColL = ['DENTALCARE', 'VISIONCARE', 'SPORTSTEAMS', 'CLUBS', 'SC_CSHCN',
                 'BIRTHWT_VL', 'BIRTHWT_L', 'HHLANGUAGE_ENGLISH', 'HHLANGUAGE_SPANISH',

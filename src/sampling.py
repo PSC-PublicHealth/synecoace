@@ -14,8 +14,6 @@ def mkSamps(df, nSamp):
         fracWt = df['FWC']/df['FWC'].sum()
         try:
             choices = np.random.choice(len(df), nSamp, p=fracWt)
-            print('choices follow: ', choices.shape, choices.dtype)
-            print(choices)
         except Exception as e:
             print('df follows:')
             print(df)

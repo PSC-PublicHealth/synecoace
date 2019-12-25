@@ -93,26 +93,24 @@ def minimizeMe(wtVec,
 
 
 class Agent(object):
-    def __init__(self, prototype, all_samples, samp_gen, fixed_l, aces_l, age,
-                 range_d = None):
+    def __init__(self, prototype, all_samples, samp_gen, fixed_l, aces_l, passive_l,
+                 age, range_d = None):
         fixed_d = {elt: prototype.iloc[0][elt] for elt in fixed_l}
-        self.fixed_keys = fixed_d 
+        self.fixed_d = fixed_d
         self.samp_gen = samp_gen
         self.age = age # whatever is in the prototype
         self.range_d = range_d
+        self.passive_l = passive_l
         self.inner_cohort = samp_gen(prototype)
-        self.outer_cohort = samp_gen(select_subset(all_samples, self.fixed_keys))
-        advancing_l = []
-        for elt in aces_l:
-            if prototype.iloc[0][elt]:
-                fixed_d[elt] = True
-            else:
-                advancing_l.append(elt)
+        self.outer_cohort = samp_gen(select_subset(all_samples, fixed_d))
+        advancing_l = [elt for elt in aces_l
+                       if elt not in list(self.fixed_d) + passive_l]
         self.advancing_l = advancing_l
         open_l = [k for k in self.outer_cohort.columns]
-        for elt in list(fixed_d) + advancing_l:
+        for elt in list(fixed_d) + advancing_l + passive_l:
             open_l.remove(elt)
         self.open_l = open_l
+        print('KEYS: ', prototype.index)
         print('initial outer_cohort unique entries: ', self.outer_cohort.index.unique())
         # set the fixed keys according to the prototype
         # the inner cohort is the prototype
@@ -126,7 +124,7 @@ class Agent(object):
         all_col_l = self.open_l + self.advancing_l
         which_bin = createBinner(all_col_l, range_d=self.range_d)
         wt_ser = createWeightSer(all_col_l, range_d=self.range_d)
-        samples_subset = select_subset(new_all_samples, self.fixed_keys)
+        samples_subset = select_subset(new_all_samples, self.fixed_d)
         print('samples_subset unique entries: ', new_all_samples.index.unique())
         new_outer_cohort = self.samp_gen(samples_subset)        
         new_age = self.age + 1
@@ -194,6 +192,9 @@ def main():
     subDF, acesL, boolColL, scalarColL = transformData(selectData(fullDF.reset_index(),
                                                                   fipsL=fipsD.values(),
                                                                   includeFips=True))
+    assert 'RECIDX' not in subDF.columns, 'RECIDX already exists?'
+    subDF = subDF.reset_index().rename(columns={'index':'RECIDX'}).drop(columns=['level_0'])
+    passiveL = ['RECIDX']
     # columns we think will be fixed throughout life
 #     fixedL = ['BIRTHWT_VL', 'BIRTHWT_L', 'PREMATURE',
 #               'HHLANGUAGE_ENGLISH', 'HHLANGUAGE_SPANISH',
@@ -207,14 +208,9 @@ def main():
               'SC_FEMALE', 'SC_RACE_NATIVE', 'SC_RACE_ASIAN',
               'SC_RACE_ISLANDS', 'SC_RACE_OTHER', 'SC_RACE_MIXED',
               'SC_RACE_HISPANIC', 'MOMAGE_LT_20', 'MOMAGE_GT_39']
-    dropL = ['DRUGSALCOHOL', 'MENTALILL', 'PARENTDIED', 'PARENTDIVORCED',
-             'PARENTJAIL', 'RACISM', 'SEEPUNCH', 'VIOLENCE',
-             'SC_RACE_WHITE', 'TOTCSHCN', 'TOTACES']
-    subDF = subDF.drop(columns=dropL)
-    for col in dropL:
-        if col in acesL: acesL.remove(col)
-        if col in boolColL: boolColL.remove(col)
-        if col in scalarColL: scalarColL.remove(col)
+    passiveL += ['DRUGSALCOHOL', 'MENTALILL', 'PARENTDIED', 'PARENTDIVORCED',
+                 'PARENTJAIL', 'RACISM', 'SEEPUNCH', 'VIOLENCE',
+                 'SC_RACE_WHITE', 'TOTCSHCN', 'TOTACES']
 
     #print(scalarColL)
     ageL = subDF['AGE'].unique()
@@ -231,7 +227,7 @@ def main():
         if range_d is None:
             range_d = dct
         else:
-            assert dct == range_d, 'Quantized ranges do not match?'
+            assert dct == range_d, 'Quantized ranges do not match?'    
 
     weightedSampGen = createWeightedSamplesGenerator(1000)
 
@@ -243,8 +239,8 @@ def main():
     prototype = scSampGen(ageDFD[ageMin])
     print('prototype columns: ', prototype.columns)
 
-    agent = Agent(prototype, ageDFD[ageMin], weightedSampGen, fixedL, acesL, ageMin,
-                  range_d=range_d)
+    agent = Agent(prototype, ageDFD[ageMin], weightedSampGen, fixedL, acesL, passiveL,
+                  ageMin, range_d=range_d)
     while agent.age < ageMax:
         new_age = agent.age + 1
         agent.age_transition(ageDFD[new_age])

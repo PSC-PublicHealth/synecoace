@@ -101,14 +101,15 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
     accepted  = np.zeros([nSamp, 1], dtype=np.int)
     onesV = np.ones([nSamp], dtype=np.int).reshape((-1, 1))
     zerosV = np.zeros([nSamp], dtype=np.int).reshape((-1, 1))
-    #A = [guess.values] # List of vectors of samples
     A = [guess]
     for n in range(nIter):
         oldAlpha  = A[-1]  # old parameter value as array
-        #print('start: ', oldAlpha)
+        #print('oldAlpha: ')
+        #print(oldAlpha.head())
         oldLnLik = lnLikFun(oldAlpha, **lnLikParams)
         newAlpha = mutator.apply(oldAlpha, **mutatorParams)
-        #print('newAlpha: ', newAlpha)
+        #print('newAlpha: ')
+        #print(newAlpha.head())
         newLnLik = lnLikFun(newAlpha, **lnLikParams)
         #print('newLnLik: ', newLnLik)
         if verbose and (n % 100 == 0):
@@ -121,8 +122,8 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
                                 np.random.random(newLnLik.shape) < np.exp(llDelta.astype(np.float)))
         rslt = np.choose(choices, [oldAlpha, newAlpha])
         rsltDF = pd.DataFrame(rslt, columns=oldAlpha.columns.copy())
-        print('point 1 result: ')
-        print(rsltDF)
+        #print('point 1 result: ')
+        #print(rsltDF.head())
         A.append(rsltDF)
         accepted += np.choose(choices, [zerosV, onesV])
     acceptanceRate = accepted/float(nIter)
@@ -157,6 +158,11 @@ def genMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator, mu
     while True:
         A, acceptanceRate = genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams,
                                                     mutator, mutatorParams, verbose=verbose)
+        print('scceptanceRate: ',
+              np.quantile(acceptanceRate, 0.25),
+              np.quantile(acceptanceRate, 0.5),
+              np.quantile(acceptanceRate, 0.75),
+              acceptanceRate.min())
         nKeep = int((acceptanceRate * nIter).min() / mutationsPerSamp)
         if nKeep:
             keepStep = nIter//nKeep

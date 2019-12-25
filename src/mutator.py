@@ -28,19 +28,20 @@ class FreshDrawMutator(Mutator):
 
 class MSTMutator(Mutator):
     def __init__(self, df):
-        idx_df = df.reset_index().drop_duplicates()
+        assert 'RECIDX' in df.columns, 'Expected RECIDX column but it is not present'
+        idx_df = df.drop_duplicates()
         nrows = len(idx_df)
         mtx = np.zeros((nrows, nrows))
-        offset_d = {offset : row['index'] for offset, (idx, row) in enumerate(idx_df[['index']].iterrows())}
+        offset_d = {offset : row['RECIDX'] for offset, (idx, row) in enumerate(idx_df[['RECIDX']].iterrows())}
         idx_d = {v : k for k, v in offset_d.items()}
-        idx_df.index = idx_df['index']
-        unique_df = idx_df.drop(columns=['index'])
+        count_df = idx_df.copy().set_index('RECIDX')
+        idx_df = idx_df.set_index('RECIDX', drop=False)
         #G = nx.Graph()
         for off0 in range(nrows):
-            row0 = unique_df.loc[offset_d[off0]]
+            row0 = count_df.loc[offset_d[off0]]
             v0 = row0.values
             for off1 in range(nrows):
-                row1 = unique_df.loc[offset_d[off1]]
+                row1 = count_df.loc[offset_d[off1]]
                 v1 = row1.values
                 wt = sum(np.abs(v1 - v0))
                 if off0 != off1:
@@ -61,6 +62,7 @@ class MSTMutator(Mutator):
             offset = np.random.choice(candidates)
             return offset_d[offset]
         self.df = df
+        self.idx_df = idx_df
         self.ssm = sp_mtx + sp_mtx.transpose()  # symmetrize
         self.offset_d = offset_d
         self.idx_d = idx_d
@@ -76,26 +78,15 @@ class MSTMutator(Mutator):
         """
         df = kwargs['df']
         assert df is self.df, 'DataFrame is not the one from which this instance was built'
-        print('input follows')
-        print(mutateThisDF)
-        print('df follows')
-        print(df)
-        print('inner df follows')
-        print(self.df)
+        mutateThisDF = mutateThisDF.set_index('RECIDX', drop=False)
         idxV = self.mutate_vec(mutateThisDF.index.values,
                                ssm=self.ssm, idx_d=self.idx_d, offset_d=self.offset_d)
-        print('idxV follows: ', idxV.shape, idxV.dtype)
-        print(idxV)
         try:
-            src = df.copy().reset_index().drop_duplicates()
-            src = src.set_index('index')
-            rslt = src.loc[idxV]
+            rslt = self.idx_df.loc[idxV]
         except Exception as e:
             import pdb
             pdb.Pdb().set_trace()
             raise
-        print('rslt follows')
-        print(rslt)
         return rslt
     
     def plot_tree(self):
