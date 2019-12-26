@@ -1,5 +1,8 @@
 #! /usr/bin/env python
 
+import os
+import uuid
+import yaml
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -116,6 +119,22 @@ class Agent(object):
         # the inner cohort is the prototype
         # the outer cohort is all samples with the same fixed keys
     
+    def write_state(self, path):
+        dct = {'fixed_d': {k : int(v) for k, v in self.fixed_d.items()},
+               'age': self.age,
+               'range_d': {k : int(v) for k, v in self.range_d.items()},
+               'passive_l': self.passive_l,
+               'advancing_l': self.advancing_l,
+               'open_l': self.open_l,
+               'outer_cohort_unique_entries': [int(v) for v in self.outer_cohort.drop_duplicates()['RECIDX']],
+               'inner_cohort_unique_entries': [int(v) for v in self.inner_cohort.drop_duplicates()['RECIDX']],
+               }
+        import pdb
+        pdb.Pdb().set_trace()
+        with open(os.path.join(path, 'state.yml'), 'w') as f:
+            yaml.dump(dct, f)
+        self.inner_cohort.to_pickle(os.path.join(path, 'inner_cohort.pkl'))
+    
     def age_transition(self, new_all_samples):
         # each fixed key must get updated according to its own rule
         # - gender, birthorder, etc. stay fixed
@@ -142,7 +161,7 @@ class Agent(object):
         #mutator = FreshDrawMutator()
         mutator = MSTMutator(new_outer_cohort)
         mutator.plot_tree()
-        mutatorParams = {'stepSzV': stepsizes, 'df': new_outer_cohort}
+        mutatorParams = {'nsteps': 2, 'df': new_outer_cohort}
     
         rslt = minimize(minimizeMe, wt_ser.values.copy(),
                         (nSamp, nIter, all_col_l,
@@ -183,7 +202,15 @@ def createWeightedSamplesGenerator(n_samp):
     return rsltF
 
 
+def get_rslt_path():
+    pth = os.path.join(os.getcwd(), str(uuid.uuid1()))
+    print('Result full path: ', pth)
+    return pth
+
+
 def main():
+    rslt_path = get_rslt_path()
+    os.makedirs(rslt_path)
     fullDF = pd.read_csv('/home/welling/git/synecoace/data/nsch_2016_topical.csv',
                          encoding='utf-8')
     print(fullDF.columns)
@@ -243,6 +270,9 @@ def main():
                   ageMin, range_d=range_d)
     while agent.age < ageMax:
         new_age = agent.age + 1
+        sub_path = os.path.join(rslt_path, '%d_%d' % (agent.age, new_age))
+        os.makedirs(sub_path)
+        agent.write_state(sub_path)
         agent.age_transition(ageDFD[new_age])
 
 #     wrkSamps = mkSamps(ageDFD[age], 100000).drop(columns=['index'])

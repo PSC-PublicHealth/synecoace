@@ -79,8 +79,16 @@ class MSTMutator(Mutator):
         df = kwargs['df']
         assert df is self.df, 'DataFrame is not the one from which this instance was built'
         mutateThisDF = mutateThisDF.set_index('RECIDX', drop=False)
-        idxV = self.mutate_vec(mutateThisDF.index.values,
-                               ssm=self.ssm, idx_d=self.idx_d, offset_d=self.offset_d)
+        firstIdxV = None
+        idxV = mutateThisDF.index.values
+        for step in range(kwargs['nsteps']):
+            idxV = self.mutate_vec(idxV,
+                                   ssm=self.ssm, idx_d=self.idx_d,
+                                   offset_d=self.offset_d)
+            if firstIdxV is None:
+                firstIdxV = idxV
+        replaceV = idxV == mutateThisDF.index.values
+        idxV = np.choose(replaceV, [idxV, firstIdxV])
         try:
             rslt = self.idx_df.loc[idxV]
         except Exception as e:

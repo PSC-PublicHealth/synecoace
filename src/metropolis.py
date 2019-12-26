@@ -158,10 +158,10 @@ def genMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator, mu
     while True:
         A, acceptanceRate = genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams,
                                                     mutator, mutatorParams, verbose=verbose)
-        print('scceptanceRate: ',
-              np.quantile(acceptanceRate, 0.25),
-              np.quantile(acceptanceRate, 0.5),
+        print('acceptanceRate: ',
               np.quantile(acceptanceRate, 0.75),
+              np.quantile(acceptanceRate, 0.5),
+              np.quantile(acceptanceRate, 0.25),
               acceptanceRate.min())
         nKeep = int((acceptanceRate * nIter).min() / mutationsPerSamp)
         if nKeep:
@@ -180,7 +180,6 @@ def genMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator, mu
             print("NO GOOD MUTATIONS; acceptance rate %s; continuing"
                   % acceptanceRate.min())
             print(acceptanceRate.min(), nIter, (acceptanceRate * nIter).min())
-            nIter *= 2
     return clean
 
 
