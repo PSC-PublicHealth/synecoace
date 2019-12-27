@@ -97,13 +97,33 @@ class MSTMutator(Mutator):
             raise
         return rslt
     
-    def plot_tree(self):
+    def plot_tree(self, weights=None, title=None):
         import networkx as nx
+        import matplotlib as mpl
         import matplotlib.pyplot as plt
-        G = nx.to_networkx_graph(self.ssm)
         plt.figure()
-        nx.draw_networkx(G)
+        if weights is None:
+            G = nx.to_networkx_graph(self.ssm)
+            nx.draw_networkx(G)
+        else:
+            nnodes = self.ssm.shape[0]
+            w_a = np.zeros(nnodes)
+            for idx in weights['RECIDX'].unique():
+                ct = weights[weights.RECIDX == idx].shape[0]
+                try:
+                    w_a[self.idx_d[idx]] = float(ct)/float(nnodes)
+                except Exception as e:
+                    import pdb
+                    pdb.Pdb().set_trace()
+            G = nx.to_networkx_graph(self.ssm)
+            nx.draw_networkx(G, node_color=w_a,
+                             cmap=plt.get_cmap('plasma'),
+                             vmin=0.0, vmax=1.0)
+        if title is not None:
+            plt.title(title)
         plt.show()
+
+            
         
 
     

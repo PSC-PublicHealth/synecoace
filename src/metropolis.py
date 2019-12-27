@@ -116,7 +116,7 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
             print('%s: %s' % (n, np.sum(newLnLik)))
         llDelta = newLnLik - oldLnLik
         llDelta = np.minimum(llDelta, 0.0)
-        #choices = np.logical_or(newLnLik > oldLnLik,
+        #choices = np.logical_or(newLnLik > oldLnLik, 
         #                        np.random.random(newLnLik.shape) < np.exp(newLnLik - oldLnLik))
         choices = np.logical_or(newLnLik > oldLnLik,
                                 np.random.random(newLnLik.shape) < np.exp(llDelta.astype(np.float)))

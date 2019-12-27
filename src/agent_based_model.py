@@ -16,6 +16,10 @@ from metropolis import mutualInfo, genMetropolisSamples
 from mutator import FreshDrawMutator, MSTMutator
 
 
+FIPS_DCT = {'SC':45, 'NC':37, 'TN':47, 'GA':13,
+            'AL':1, 'VA':51, 'LA':22, 'AR':5}
+
+
 def select_subset(df, match_dct):
     df = df.copy()
     print('begin select_subset: %d records, %d unique'
@@ -36,25 +40,51 @@ def createWeightSer(colL, range_d, vals=None):
     return wtSer
 
 
+# def lnLik(samps1V, samps2V, wtSerV):
+#     """
+#     funV has the right shape to fill the role of likelihood in the Metropolis algorithm.  We'll
+#     take the log, and use it as a log likelihood.
+#     """
+#     try:
+#         wtA = wtSerV.values
+#         sub1DF = samps1V[wtSerV.index]
+#         sub2DF = samps2V[wtSerV.index]
+#         delta = sub1DF.values - sub2DF.values
+#         delta *= delta
+#         import pdb
+#         pdb.Pdb().set_trace()
+#     except Exception as e:
+#         print('samps1V: ')
+#         print(samps1V)
+#         print('wtSerV.index:')
+#         print(wtSerV.index)
+#         raise
+#          
+#     return np.asarray((-np.asmatrix(wtA) * np.asmatrix(delta).transpose())).reshape((-1, 1))
+
+
 def lnLik(samps1V, samps2V, wtSerV):
     """
     funV has the right shape to fill the role of likelihood in the Metropolis algorithm.  We'll
     take the log, and use it as a log likelihood.
     """
     try:
-        wtA = wtSerV.values
+        wtA = wtSerV.values.astype(np.float)
         sub1DF = samps1V[wtSerV.index]
+        sub1M = sub1DF.values.astype(np.float)
         sub2DF = samps2V[wtSerV.index]
-        delta = sub1DF.values - sub2DF.values
-        delta *= delta
+        sub2M = sub2DF.values.astype(np.float)
+        rslt = np.einsum('ia,a,ja -> i', sub1M, wtA, sub2M)
     except Exception as e:
         print('samps1V: ')
         print(samps1V)
         print('wtSerV.index:')
         print(wtSerV.index)
+        import pdb
+        pdb.Pdb().set_trace()
         raise
-        
-    return np.asarray((-np.asmatrix(wtA) * np.asmatrix(delta).transpose())).reshape((-1, 1))
+         
+    return (1.0/float(sub2M.shape[0])) * rslt.reshape((-1,1))
 
 
 # This function takes lnLik from the environment!
@@ -129,8 +159,6 @@ class Agent(object):
                'outer_cohort_unique_entries': [int(v) for v in self.outer_cohort.drop_duplicates()['RECIDX']],
                'inner_cohort_unique_entries': [int(v) for v in self.inner_cohort.drop_duplicates()['RECIDX']],
                }
-        import pdb
-        pdb.Pdb().set_trace()
         with open(os.path.join(path, 'state.yml'), 'w') as f:
             yaml.dump(dct, f)
         self.inner_cohort.to_pickle(os.path.join(path, 'inner_cohort.pkl'))
@@ -168,7 +196,10 @@ class Agent(object):
                          self.samp_gen,
                          testSampParams, genSampParams,
                          which_bin, binnerParams,
-                         mutator, mutatorParams), method='powell')
+                         mutator, mutatorParams),
+                        method='L-BFGS-B',
+                        bounds=[(0.25*v, 4.0*v) for v in wt_ser.values],
+                        options={'eps':0.01})
         print('------------------')
         print('Optimization result:')
         print(rslt)
@@ -208,16 +239,12 @@ def get_rslt_path():
     return pth
 
 
-def main():
-    rslt_path = get_rslt_path()
-    os.makedirs(rslt_path)
+def load_dataset():
     fullDF = pd.read_csv('/home/welling/git/synecoace/data/nsch_2016_topical.csv',
                          encoding='utf-8')
     print(fullDF.columns)
-    fipsD = {'SC':45, 'NC':37, 'TN':47, 'GA':13,
-             'AL':1, 'VA':51, 'LA':22, 'AR':5}
     subDF, acesL, boolColL, scalarColL = transformData(selectData(fullDF.reset_index(),
-                                                                  fipsL=fipsD.values(),
+                                                                  fipsL=FIPS_DCT.values(),
                                                                   includeFips=True))
     assert 'RECIDX' not in subDF.columns, 'RECIDX already exists?'
     subDF = subDF.reset_index().rename(columns={'index':'RECIDX'}).drop(columns=['level_0'])
@@ -238,9 +265,17 @@ def main():
     passiveL += ['DRUGSALCOHOL', 'MENTALILL', 'PARENTDIED', 'PARENTDIVORCED',
                  'PARENTJAIL', 'RACISM', 'SEEPUNCH', 'VIOLENCE',
                  'SC_RACE_WHITE', 'TOTCSHCN', 'TOTACES']
+    ageL = subDF['AGE'].unique()
+    return subDF, acesL, boolColL, scalarColL, fixedL, passiveL, ageL
+
+
+def main():
+    rslt_path = get_rslt_path()
+    os.makedirs(rslt_path)
+
+    subDF, acesL, boolColL, scalarColL, fixedL, passiveL, ageL = load_dataset()
 
     #print(scalarColL)
-    ageL = subDF['AGE'].unique()
     print('ages: ', ageL)
     ageMin = int(min(ageL))
     ageMax = int(max(ageL))
@@ -259,7 +294,7 @@ def main():
     weightedSampGen = createWeightedSamplesGenerator(1000)
 
     df = subDF[subDF.AGE==ageMin].drop(columns='AGE')
-    df = df[df.FIPSST == fipsD['SC']].drop(columns=['FIPSST'])
+    df = df[df.FIPSST == FIPS_DCT['SC']].drop(columns=['FIPSST'])
     df, _, _, _, dct = quantizeData(df, acesL, boolColL, scalarColL)
     assert dct == range_d, 'Quantized ranges do not match?'
     scSampGen = createWeightedSamplesGenerator(1)
