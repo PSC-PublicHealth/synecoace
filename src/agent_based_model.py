@@ -188,7 +188,7 @@ class Agent(object):
         binnerParams = {}
         #mutator = FreshDrawMutator()
         mutator = MSTMutator(new_outer_cohort)
-        mutator.plot_tree()
+        #mutator.plot_tree()
         mutatorParams = {'nsteps': 2, 'df': new_outer_cohort}
     
         rslt = minimize(minimizeMe, wt_ser.values.copy(),
@@ -198,7 +198,7 @@ class Agent(object):
                          which_bin, binnerParams,
                          mutator, mutatorParams),
                         method='L-BFGS-B',
-                        bounds=[(0.25*v, 4.0*v) for v in wt_ser.values],
+                        bounds=[(0.5*v, 4.0*v) for v in wt_ser.values],
                         options={'eps':0.01})
         print('------------------')
         print('Optimization result:')
@@ -206,6 +206,7 @@ class Agent(object):
         print('------------------')
  
         bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
+        #bestWtSer = wt_ser
         lnLikParams = {'samps2V': self.inner_cohort, 'wtSerV': bestWtSer}
         cleanSamps = genMetropolisSamples(nSamp, nIter, self.samp_gen(**genSampParams), 
                                           lnLik, lnLikParams,
