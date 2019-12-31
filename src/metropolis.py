@@ -155,20 +155,34 @@ def genMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator, mu
         cleanSamps: a list of vectors of independent samples
     """
     clean = []
+    allA = [guess]
+    allAcceptanceRate = None
+    totIter = 0
     while True:
-        A, acceptanceRate = genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams,
+        A, acceptanceRate = genRawMetropolisSamples(nSamp, nIter, allA[-1],
+                                                    lnLikFun, lnLikParams,
                                                     mutator, mutatorParams, verbose=verbose)
         print('acceptanceRate: ',
               np.quantile(acceptanceRate, 0.75),
               np.quantile(acceptanceRate, 0.5),
               np.quantile(acceptanceRate, 0.25),
               acceptanceRate.min())
-        nKeep = int((acceptanceRate * nIter).min() / mutationsPerSamp)
+        allA = allA + A[1:]  # avoid twinning last entry, which was seed new new entries
+        if allAcceptanceRate is None:
+            allAcceptanceRate = acceptanceRate
+        else:
+            newFrac = float(len(A) - 1)/float(len(allA))
+            allAcceptanceRate = (newFrac * acceptanceRate 
+                                 + (1.0 - newFrac) * allAcceptanceRate)
+        totIter += nIter
+        nKeep = int((acceptanceRate * totIter).min() / mutationsPerSamp)
         if nKeep:
-            keepStep = nIter//nKeep
+            keepStep = totIter//nKeep
             burnIn = burninMutations * keepStep
-            if burnIn >= nIter:
-                burninMutations -= nIter//keepStep
+            if burnIn >= totIter:
+                nBurned = totIter//keepStep
+                burninMutations -= nBurned
+                allA = allA[nBurned:]
                 print("Not enough mutations for burn-in; acceptance rate %s; %d discards remain"
                       % (acceptanceRate.min(), burninMutations))
             else:
