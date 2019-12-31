@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 
 import os
+from optparse import OptionParser
 import uuid
 import yaml
 import numpy as np
@@ -127,7 +128,7 @@ def minimizeMe(wtVec,
 
 class Agent(object):
     def __init__(self, prototype, all_samples, samp_gen, fixed_l, aces_l, passive_l,
-                 age, range_d = None):
+                 age, range_d = None, fixed_guide=False):
         fixed_d = {elt: prototype.iloc[0][elt] for elt in fixed_l}
         self.fixed_d = fixed_d
         self.samp_gen = samp_gen
@@ -143,6 +144,7 @@ class Agent(object):
         for elt in list(fixed_d) + advancing_l + passive_l:
             open_l.remove(elt)
         self.open_l = open_l
+        self.fixed_guide = fixed_guide
         print('KEYS: ', prototype.index)
         print('initial outer_cohort unique entries: ', self.outer_cohort.index.unique())
         # set the fixed keys according to the prototype
@@ -190,23 +192,29 @@ class Agent(object):
         mutator = MSTMutator(new_outer_cohort)
         #mutator.plot_tree()
         mutatorParams = {'nsteps': 2, 'df': new_outer_cohort}
-    
-        rslt = minimize(minimizeMe, wt_ser.values.copy(),
-                        (nSamp, nIter, all_col_l,
-                         self.samp_gen,
-                         testSampParams, genSampParams,
-                         which_bin, binnerParams,
-                         mutator, mutatorParams),
-                        method='L-BFGS-B',
-                        bounds=[(0.5*v, 4.0*v) for v in wt_ser.values],
-                        options={'eps':0.01})
-        print('------------------')
-        print('Optimization result:')
-        print(rslt)
-        print('------------------')
- 
-        bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
-        #bestWtSer = wt_ser
+
+        if self.fixed_guide:
+            print('------------------')
+            print('Using fixed guide function:')
+            print(wt_ser.values)
+            print('------------------')
+            bestWtSer = wt_ser
+        else:
+            rslt = minimize(minimizeMe, wt_ser.values.copy(),
+                            (nSamp, nIter, all_col_l,
+                             self.samp_gen,
+                             testSampParams, genSampParams,
+                             which_bin, binnerParams,
+                             mutator, mutatorParams),
+                            method='L-BFGS-B',
+                            bounds=[(0.5*v, 4.0*v) for v in wt_ser.values],
+                            options={'eps':0.01})
+            print('------------------')
+            print('Optimization result:')
+            print(rslt)
+            print('------------------')
+            bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
+
         lnLikParams = {'samps2V': self.inner_cohort, 'wtSerV': bestWtSer}
         cleanSamps = genMetropolisSamples(nSamp, nIter, self.samp_gen(**genSampParams), 
                                           lnLik, lnLikParams,
@@ -271,6 +279,25 @@ def load_dataset():
 
 
 def main():
+    parser = OptionParser(usage="""
+    %prog [--fixed] [seed]
+    """)
+    parser.add_option('--fixed', action='store_true',
+                      help="Use a fixed generic guide function")
+    opts, args = parser.parse_args()
+    if len(args) > 1:
+        parser.error('Extra arguments found')
+    if len(args) == 1:
+        try:
+            seed_row = int(args[0])
+        except ValueError:
+            parser.error('seed must be an integer row number')
+    else:
+        seed_row = None
+
+    parser.destroy()
+
+    
     rslt_path = get_rslt_path()
     os.makedirs(rslt_path)
 
@@ -294,16 +321,24 @@ def main():
 
     weightedSampGen = createWeightedSamplesGenerator(1000)
 
-    df = subDF[subDF.AGE==ageMin].drop(columns='AGE')
-    df = df[df.FIPSST == FIPS_DCT['SC']].drop(columns=['FIPSST'])
-    df, _, _, _, dct = quantizeData(df, acesL, boolColL, scalarColL)
-    assert dct == range_d, 'Quantized ranges do not match?'
     scSampGen = createWeightedSamplesGenerator(1)
-    prototype = scSampGen(ageDFD[ageMin])
+    if seed_row is None:
+        df = df[df.FIPSST == FIPS_DCT['SC']].drop(columns=['FIPSST'])
+        df, _, _, _, dct = quantizeData(df, acesL, boolColL, scalarColL)
+        assert dct == range_d, 'Quantized ranges do not match?'
+        prototype = scSampGen(ageDFD[ageMin])
+    else:
+        df = subDF[subDF.AGE==ageMin].drop(columns=['AGE', 'FIPSST'])
+        df = df[df.RECIDX == seed_row]
+        assert df.shape[0] == 1, 'Seed matched %d samples' % df.count()
+        df, _, _, _, dct = quantizeData(df, acesL, boolColL, scalarColL)
+        assert dct == range_d, 'Quantized ranges do not match?'
+        prototype = scSampGen(df)
+        
     print('prototype columns: ', prototype.columns)
 
     agent = Agent(prototype, ageDFD[ageMin], weightedSampGen, fixedL, acesL, passiveL,
-                  ageMin, range_d=range_d)
+                  ageMin, range_d=range_d, fixed_guide=opts.fixed)
     while agent.age < ageMax:
         new_age = agent.age + 1
         sub_path = os.path.join(rslt_path, '%d_%d' % (agent.age, new_age))
@@ -311,11 +346,6 @@ def main():
         agent.write_state(sub_path)
         agent.age_transition(ageDFD[new_age])
 
-#     wrkSamps = mkSamps(ageDFD[age], 100000).drop(columns=['index'])
-#     #print(wrkSamps.columns)
-#     print('-------- age {}: {} samples ----------'.format(age, len(ageDFD[age])))
-#     for col in acesL:
-#         print(col, ' : ', float(wrkSamps[col].sum())/float(len(wrkSamps)))
 
 if __name__ == "__main__":
     main()
