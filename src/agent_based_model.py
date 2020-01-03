@@ -1,12 +1,14 @@
 #! /usr/bin/env python
 
+import sys
 import os
 from optparse import OptionParser
 import uuid
 import yaml
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from scipy.optimize import minimize, differential_evolution
+from  scipy.stats import describe
 import matplotlib.pyplot as plt
 
 from data_conversions import selectData, transformData
@@ -37,7 +39,7 @@ def createWeightSer(colL, range_d, vals=None):
         wtSer = pd.Series({col:1.0/range_d[col] for col in colL})
     else:
         wtSer = pd.Series({col:v for col, v in zip(colL, vals)})
-    print('wtSer: %s' % wtSer.values)
+    #print('wtSer: %s' % wtSer.values)
     return wtSer
 
 
@@ -122,13 +124,15 @@ def minimizeMe(wtVec,
     mI = sampleAndCalcMI(wtSer, nSamp, nIter, sampler, testSampParams, genSampParams,
                          binner, binnerParams,
                          mutator, mutatorParams, drawGraph=False, verbose=False)
-    print('minimizeMe -> ', mI)
+    #print('minimizeMe -> ', mI)
     return -mI
 
 
 class Agent(object):
     def __init__(self, prototype, all_samples, samp_gen, fixed_l, aces_l, passive_l,
-                 age, range_d = None, fixed_guide=False):
+                 age, range_d = None, algorithm=None):
+        assert algorithm is not None, 'algorithm should be set'
+        self.algorithm = algorithm
         fixed_d = {elt: prototype.iloc[0][elt] for elt in fixed_l}
         self.fixed_d = fixed_d
         self.samp_gen = samp_gen
@@ -144,7 +148,7 @@ class Agent(object):
         for elt in list(fixed_d) + advancing_l + passive_l:
             open_l.remove(elt)
         self.open_l = open_l
-        self.fixed_guide = fixed_guide
+        self.mutual_info = None
         print('KEYS: ', prototype.index)
         print('initial outer_cohort unique entries: ', self.outer_cohort.index.unique())
         # set the fixed keys according to the prototype
@@ -152,79 +156,156 @@ class Agent(object):
         # the outer cohort is all samples with the same fixed keys
     
     def write_state(self, path):
+        if 'RECIDX' in self.outer_cohort.columns:
+            outer_cohort_unique = [int(v) for v in self.outer_cohort.drop_duplicates()['RECIDX']]
+        else:
+            outer_cohort_unique = self.outer_cohort.index.unique()
+        if 'RECIDX' in self.inner_cohort.columns:
+            inner_cohort_unique = [int(v) for v in self.inner_cohort.drop_duplicates()['RECIDX']]
+        else:
+            inner_cohort_unique = self.inner_cohort.index.unique()
+
         dct = {'fixed_d': {k : int(v) for k, v in self.fixed_d.items()},
                'age': self.age,
                'range_d': {k : int(v) for k, v in self.range_d.items()},
                'passive_l': self.passive_l,
                'advancing_l': self.advancing_l,
                'open_l': self.open_l,
-               'outer_cohort_unique_entries': [int(v) for v in self.outer_cohort.drop_duplicates()['RECIDX']],
-               'inner_cohort_unique_entries': [int(v) for v in self.inner_cohort.drop_duplicates()['RECIDX']],
+               'outer_cohort_unique_entries': outer_cohort_unique,
+               'inner_cohort_unique_entries': inner_cohort_unique,
+               'algorithm': self.algorithm,
+               'mutualinfo': self.mutual_info
                }
         with open(os.path.join(path, 'state.yml'), 'w') as f:
             yaml.dump(dct, f)
         self.inner_cohort.to_pickle(os.path.join(path, 'inner_cohort.pkl'))
+
+    def fitness(self, vec, **kwargs):
+        return -mutualInfo(self.vec_to_df(vec), kwargs['target'],
+                           self.binner, self.binnerParams)
     
+    def vec_to_df(self, vec):
+        return self.samples_indexed.loc[vec]
+        
+
     def age_transition(self, new_all_samples):
-        # each fixed key must get updated according to its own rule
-        # - gender, birthorder, etc. stay fixed
-        # the outer cohort is all samples at the new age with the same fixed keys
         print('new_all_samples unique entries: ', new_all_samples.index.unique())
         all_col_l = self.open_l + self.advancing_l
         which_bin = createBinner(all_col_l, range_d=self.range_d)
+        self.binner = which_bin
+        self.binnerParams = {}
         wt_ser = createWeightSer(all_col_l, range_d=self.range_d)
         samples_subset = select_subset(new_all_samples, self.fixed_d)
         print('samples_subset unique entries: ', new_all_samples.index.unique())
         new_outer_cohort = self.samp_gen(samples_subset)        
         new_age = self.age + 1
-        print('------------------')
-        print('new outer cohort unique entries: ', new_outer_cohort.index.unique())
-        print('starting %s -> %s' % (self.age, new_age))
-        print('------------------')
-        nSamp = len(self.inner_cohort)
-        nIter = 1000
-        stepsizes = np.empty([nSamp])
-        stepsizes.fill(0.005)
-        testSampParams = {'df': self.inner_cohort}
-        genSampParams = {'df': new_outer_cohort}
-        binnerParams = {}
-        #mutator = FreshDrawMutator()
-        mutator = MSTMutator(new_outer_cohort)
-        #mutator.plot_tree()
-        mutatorParams = {'nsteps': 2, 'df': new_outer_cohort}
 
-        if self.fixed_guide:
-            print('------------------')
-            print('Using fixed guide function:')
-            print(wt_ser.values)
-            print('------------------')
-            bestWtSer = wt_ser
-        else:
-            rslt = minimize(minimizeMe, wt_ser.values.copy(),
-                            (nSamp, nIter, all_col_l,
-                             self.samp_gen,
-                             testSampParams, genSampParams,
-                             which_bin, binnerParams,
-                             mutator, mutatorParams),
-                            method='L-BFGS-B',
-                            bounds=[(0.5*v, 4.0*v) for v in wt_ser.values],
-                            options={'eps':0.01})
-            print('------------------')
-            print('Optimization result:')
-            print(rslt)
-            print('------------------')
-            bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
+        if self.algorithm == 'genetic':
+            print('samples_subset columns:', samples_subset.columns)
+            print(samples_subset.head())
+            self.pool = samples_subset['RECIDX'].unique()
+            self.samples_indexed = samples_subset.drop(columns=['FWC']).set_index('RECIDX')
 
-        lnLikParams = {'samps2V': self.inner_cohort, 'wtSerV': bestWtSer}
-        cleanSamps = genMetropolisSamples(nSamp, nIter, self.samp_gen(**genSampParams), 
-                                          lnLik, lnLikParams,
-                                          mutator, mutatorParams, verbose=True)
-        if isinstance(cleanSamps[0], pd.DataFrame):
-            newCleanV = pd.concat(cleanSamps)
-        else:
-            newCleanV = np.concatenate(cleanSamps)
-        new_inner_cohort = self.samp_gen(newCleanV)
-        
+            popsz = 50  # 2
+            grpsz = len(self.inner_cohort)
+            crossp = 0.5  # Fraction of array replaced in a crossing op
+            crossfrac = 0.8  # Fraction of the replacement which comes from an existing pop member
+
+            pop = {idx : np.random.choice(self.pool, grpsz) for idx in range(popsz)}
+            #target = np.random.choice(self.pool, grpsz) # for test purposes
+            target = self.inner_cohort
+            fitnessParams = {'target' : target}
+            fitnessV = np.asarray([self.fitness(pop[idx], **fitnessParams) for idx in range(popsz)])
+            best_idx = np.argmin(fitnessV)
+            best = pop[best_idx]
+            print('Best: ', best_idx, fitnessV[best_idx])
+            niter = 100
+            for iter in range(niter):
+                cross_ct = 0
+                for j in range(popsz):
+                    mutant = np.random.choice(self.pool, grpsz)  # a fresh mutant
+                    idxs = [idx for idx in range(popsz) if idx != j]
+                    nbr = pop[np.random.choice(idxs)]  # random member of the population
+                    nbr_mutant_cross_points = np.random.rand(grpsz) < crossfrac
+                    nbr_mutant_cross = np.where(nbr_mutant_cross_points, nbr, mutant)
+                    cross_points = np.random.rand(grpsz) < crossp
+                    if not np.any(cross_points):
+                        cross_points[np.random.randint(0, grpsz)] = True
+                    trial = np.where(cross_points, nbr_mutant_cross, pop[j])
+                    f = self.fitness(trial, **fitnessParams)
+                    if f < fitnessV[j]:
+                        fitnessV[j] = f
+                        pop[j] = trial
+                        cross_ct += 1
+                        if f < fitnessV[best_idx]:
+                            best_idx = j
+                            best = trial
+                #yield best, fitness[best_idx]
+                print('Iter ', iter, ':', best_idx, fitnessV[best_idx], cross_ct)
+            new_inner_cohort = self.vec_to_df(best)
+            self.mutual_info = fitnessV[best_idx]
+
+        elif self.algorithm in ['fixed', 'd_e', 'gradient']:  # all of which use explicit guide func
+            if self.algorithm == 'fixed':
+                print('------------------')
+                print('Using fixed guide function:')
+                print(wt_ser.values)
+                print('------------------')
+                bestWtSer = wt_ser
+            elif self.algorithm in ['d_e', 'gradient']:
+                print('------------------')
+                print('new outer cohort unique entries: ', new_outer_cohort.index.unique())
+                print('starting %s -> %s' % (self.age, new_age))
+                print('------------------')
+                nSamp = len(self.inner_cohort)
+                nIter = 1000
+                stepsizes = np.empty([nSamp])
+                stepsizes.fill(0.005)
+                testSampParams = {'df': self.inner_cohort}
+                genSampParams = {'df': new_outer_cohort}
+                binnerParams = {}
+                #mutator = FreshDrawMutator()
+                mutator = MSTMutator(new_outer_cohort)
+                #mutator.plot_tree()
+                mutatorParams = {'nsteps': 2, 'df': new_outer_cohort}
+                if self.algorithm == 'd_e':
+                    rslt = differential_evolution(minimizeMe, 
+                                                  [(0.5*v, 4.0*v) for v in wt_ser.values],
+                                                  (nSamp, nIter, all_col_l,
+                                                   self.samp_gen,
+                                                   testSampParams, genSampParams,
+                                                   which_bin, binnerParams,
+                                                   mutator, mutatorParams),
+                                                  maxiter=10, popsize=10,
+                                                  disp=True)
+                else:  # gradient
+                    rslt = minimize(minimizeMe, wt_ser.values.copy(),
+                                    (nSamp, nIter, all_col_l,
+                                     self.samp_gen,
+                                     testSampParams, genSampParams,
+                                     which_bin, binnerParams,
+                                     mutator, mutatorParams),
+                                    method='L-BFGS-B',
+                                    bounds=[(0.5*v, 4.0*v) for v in wt_ser.values],
+                                    options={'eps':0.01})
+                print('------------------')
+                print('Optimization result:')
+                print(rslt)
+                print('------------------')
+                bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
+    
+            lnLikParams = {'samps2V': self.inner_cohort, 'wtSerV': bestWtSer}
+            cleanSamps = genMetropolisSamples(nSamp, nIter, self.samp_gen(**genSampParams), 
+                                              lnLik, lnLikParams,
+                                              mutator, mutatorParams, verbose=True)
+            if isinstance(cleanSamps[0], pd.DataFrame):
+                newCleanV = pd.concat(cleanSamps)
+            else:
+                newCleanV = np.concatenate(cleanSamps)
+            new_inner_cohort = self.samp_gen(newCleanV)
+            self.mutual_info =  -mutualInfo(new_inner_cohort, self.inner_cohort,
+                                            self.binner, self.binnerParams)
+
         print('new inner cohort unique entries: ', new_inner_cohort.index.unique())
         print('------------------')
 
@@ -280,10 +361,14 @@ def load_dataset():
 
 def main():
     parser = OptionParser(usage="""
-    %prog [--fixed] [seed]
+    %prog [--alg=ALG] [seed]
     """)
-    parser.add_option('--fixed', action='store_true',
-                      help="Use a fixed generic guide function")
+#     parser.add_option('--fixed', action='store_true',
+#                       help="Use a fixed generic guide function")
+    parser.add_option('--alg', action='store',
+                      choices=['gradient', 'fixed', 'genetic', 'd_e'],
+                      help="Algorithm - one of gradient, fixed, genetic, d_e [default %default]",
+                      default="fixed")
     opts, args = parser.parse_args()
     if len(args) > 1:
         parser.error('Extra arguments found')
@@ -296,7 +381,6 @@ def main():
         seed_row = None
 
     parser.destroy()
-
     
     rslt_path = get_rslt_path()
     os.makedirs(rslt_path)
@@ -323,7 +407,8 @@ def main():
 
     scSampGen = createWeightedSamplesGenerator(1)
     if seed_row is None:
-        df = df[df.FIPSST == FIPS_DCT['SC']].drop(columns=['FIPSST'])
+        df = subDF[subDF.AGE==ageMin]
+        df = df[df.FIPSST == FIPS_DCT['SC']].drop(columns=['AGE', 'FIPSST'])
         df, _, _, _, dct = quantizeData(df, acesL, boolColL, scalarColL)
         assert dct == range_d, 'Quantized ranges do not match?'
         prototype = scSampGen(ageDFD[ageMin])
@@ -338,7 +423,7 @@ def main():
     print('prototype columns: ', prototype.columns)
 
     agent = Agent(prototype, ageDFD[ageMin], weightedSampGen, fixedL, acesL, passiveL,
-                  ageMin, range_d=range_d, fixed_guide=opts.fixed)
+                  ageMin, range_d=range_d, algorithm=opts.alg)
     while agent.age < ageMax:
         new_age = agent.age + 1
         sub_path = os.path.join(rslt_path, '%d_%d' % (agent.age, new_age))
