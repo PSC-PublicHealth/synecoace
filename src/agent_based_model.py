@@ -23,14 +23,23 @@ FIPS_DCT = {'SC':45, 'NC':37, 'TN':47, 'GA':13,
             'AL':1, 'VA':51, 'LA':22, 'AR':5}
 
 
+def get_unique_entries(cohort):
+    if 'RECIDX' in cohort.columns:
+        lst = [int(v) for v in cohort.drop_duplicates()['RECIDX']]
+    else:
+        lst = [int(v) for v in cohort.index.unique()]
+    lst.sort()
+    return lst
+
+
 def select_subset(df, match_dct):
     df = df.copy()
     print('begin select_subset: %d records, %d unique'
-          % (int(df.shape[0]), len(df.index.unique())))
+          % (int(df.shape[0]), len(get_unique_entries(df))))
     for k, v in match_dct.items():
         df = df[df[k] == v]
         print('%s == %s: %d entries, %d unique'
-              % (k, v, int(df.shape[0]), len(df.index.unique())))
+              % (k, v, int(df.shape[0]), len(get_unique_entries(df))))
     return df
 
 
@@ -139,7 +148,6 @@ class Agent(object):
         self.age = age # whatever is in the prototype
         self.range_d = range_d
         self.passive_l = passive_l
-        self.inner_cohort = samp_gen(prototype)
         self.outer_cohort = samp_gen(select_subset(all_samples, fixed_d))
         advancing_l = [elt for elt in aces_l
                        if elt not in list(self.fixed_d) + passive_l]
@@ -150,20 +158,19 @@ class Agent(object):
         self.open_l = open_l
         self.mutual_info = None
         print('KEYS: ', prototype.index)
-        print('initial outer_cohort unique entries: ', self.outer_cohort.index.unique())
-        # set the fixed keys according to the prototype
-        # the inner cohort is the prototype
-        # the outer cohort is all samples with the same fixed keys
+        #self.inner_cohort = samp_gen(prototype)
+        self.inner_cohort = self.gen_samples_using(samp_gen(prototype),
+                                                   self.outer_cohort,
+                                                   MSTMutator(self.outer_cohort),
+                                                   {'nsteps': 2},
+                                                   createWeightSer(self.open_l + self.advancing_l,
+                                                                   range_d=self.range_d))
+        print('initial outer_cohort unique entries: ', get_unique_entries(self.outer_cohort))
+        print('initial inner_cohort unique entries: ', get_unique_entries(self.inner_cohort))
     
     def write_state(self, path):
-        if 'RECIDX' in self.outer_cohort.columns:
-            outer_cohort_unique = [int(v) for v in self.outer_cohort.drop_duplicates()['RECIDX']]
-        else:
-            outer_cohort_unique = self.outer_cohort.index.unique()
-        if 'RECIDX' in self.inner_cohort.columns:
-            inner_cohort_unique = [int(v) for v in self.inner_cohort.drop_duplicates()['RECIDX']]
-        else:
-            inner_cohort_unique = self.inner_cohort.index.unique()
+        outer_cohort_unique = get_unique_entries(self.outer_cohort)
+        inner_cohort_unique = get_unique_entries(self.inner_cohort)
 
         dct = {'fixed_d': {k : int(v) for k, v in self.fixed_d.items()},
                'age': self.age,
@@ -189,16 +196,22 @@ class Agent(object):
         
 
     def age_transition(self, new_all_samples):
-        print('new_all_samples unique entries: ', new_all_samples.index.unique())
+        new_age = self.age + 1
+        print('------------------')
+        print('new_all_samples unique entries: ', len(get_unique_entries(new_all_samples)))
         all_col_l = self.open_l + self.advancing_l
         which_bin = createBinner(all_col_l, range_d=self.range_d)
         self.binner = which_bin
         self.binnerParams = {}
         wt_ser = createWeightSer(all_col_l, range_d=self.range_d)
         samples_subset = select_subset(new_all_samples, self.fixed_d)
-        print('samples_subset unique entries: ', new_all_samples.index.unique())
+        print('------------------')
+        print('samples_subset unique entries: ', len(get_unique_entries(samples_subset)))
         new_outer_cohort = self.samp_gen(samples_subset)        
-        new_age = self.age + 1
+        print('------------------')
+        print('new outer cohort unique entries: ', get_unique_entries(new_outer_cohort))
+        print('starting %s -> %s' % (self.age, new_age))
+        print('------------------')
 
         if self.algorithm == 'genetic':
             print('samples_subset columns:', samples_subset.columns)
@@ -246,6 +259,11 @@ class Agent(object):
             self.mutual_info = fitnessV[best_idx]
 
         elif self.algorithm in ['fixed', 'd_e', 'gradient']:  # all of which use explicit guide func
+            #mutator = FreshDrawMutator()
+            #mutatorParams = {'df': new_outer_cohort}
+            mutator = MSTMutator(new_outer_cohort)
+            #mutator.plot_tree()
+            mutatorParams = {'nsteps': 2, 'df': new_outer_cohort}
             if self.algorithm == 'fixed':
                 print('------------------')
                 print('Using fixed guide function:')
@@ -253,10 +271,6 @@ class Agent(object):
                 print('------------------')
                 bestWtSer = wt_ser
             elif self.algorithm in ['d_e', 'gradient']:
-                print('------------------')
-                print('new outer cohort unique entries: ', new_outer_cohort.index.unique())
-                print('starting %s -> %s' % (self.age, new_age))
-                print('------------------')
                 nSamp = len(self.inner_cohort)
                 nIter = 1000
                 stepsizes = np.empty([nSamp])
@@ -264,10 +278,6 @@ class Agent(object):
                 testSampParams = {'df': self.inner_cohort}
                 genSampParams = {'df': new_outer_cohort}
                 binnerParams = {}
-                #mutator = FreshDrawMutator()
-                mutator = MSTMutator(new_outer_cohort)
-                #mutator.plot_tree()
-                mutatorParams = {'nsteps': 2, 'df': new_outer_cohort}
                 if self.algorithm == 'd_e':
                     rslt = differential_evolution(minimizeMe, 
                                                   [(0.5*v, 4.0*v) for v in wt_ser.values],
@@ -292,26 +302,48 @@ class Agent(object):
                 print('Optimization result:')
                 print(rslt)
                 print('------------------')
-                bestWtSer = createWeightSer(all_col_l, {}, rslt.x)
+                bestWtSer = createWeightSer(all_col_l, {}, rslt.x, niter=nIter)
     
-            lnLikParams = {'samps2V': self.inner_cohort, 'wtSerV': bestWtSer}
-            cleanSamps = genMetropolisSamples(nSamp, nIter, self.samp_gen(**genSampParams), 
-                                              lnLik, lnLikParams,
-                                              mutator, mutatorParams, verbose=True)
-            if isinstance(cleanSamps[0], pd.DataFrame):
-                newCleanV = pd.concat(cleanSamps)
-            else:
-                newCleanV = np.concatenate(cleanSamps)
-            new_inner_cohort = self.samp_gen(newCleanV)
+#             lnLikParams = {'samps2V': self.inner_cohort, 'wtSerV': bestWtSer}
+#             cleanSamps = genMetropolisSamples(nSamp, nIter, self.samp_gen(**genSampParams), 
+#                                               lnLik, lnLikParams,
+#                                               mutator, mutatorParams, verbose=True)
+#             if isinstance(cleanSamps[0], pd.DataFrame):
+#                 newCleanV = pd.concat(cleanSamps)
+#             else:
+#                 newCleanV = np.concatenate(cleanSamps)
+#             new_inner_cohort = self.samp_gen(newCleanV)
+            new_inner_cohort = self.gen_samples_using(self.inner_cohort,
+                                                      new_outer_cohort,
+                                                      mutator, mutatorParams,
+                                                      bestWtSer)
             self.mutual_info =  -mutualInfo(new_inner_cohort, self.inner_cohort,
                                             self.binner, self.binnerParams)
 
-        print('new inner cohort unique entries: ', new_inner_cohort.index.unique())
+        lst = get_unique_entries(new_inner_cohort)
+        print('new inner cohort unique entries (%d): %s' % (len(lst), lst))
         print('------------------')
 
         self.age = new_age
         self.outer_cohort = new_outer_cohort
         self.inner_cohort = new_inner_cohort
+        
+
+    def gen_samples_using(self, target_cohort, pool_cohort,
+                          mutator, mutator_params,
+                           wt_ser, niter=1000):
+            ln_lik_params = {'samps2V': target_cohort, 'wtSerV': wt_ser}
+            gen_samp_params = {'df': pool_cohort}
+            
+            nsamp = len(target_cohort)
+            cleanSamps = genMetropolisSamples(nsamp, niter, self.samp_gen(**gen_samp_params), 
+                                              lnLik, ln_lik_params,
+                                              mutator, mutator_params, verbose=True)
+            if isinstance(cleanSamps[0], pd.DataFrame):
+                newCleanV = pd.concat(cleanSamps)
+            else:
+                newCleanV = np.concatenate(cleanSamps)
+            return self.samp_gen(newCleanV)
         
 
 def createWeightedSamplesGenerator(n_samp):
