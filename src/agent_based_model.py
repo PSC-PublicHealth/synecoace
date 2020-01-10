@@ -407,10 +407,16 @@ def main():
     if len(args) == 1:
         try:
             seed_row = int(args[0])
+            seed_file = None
         except ValueError:
-            parser.error('seed must be an integer row number')
+            if os.path.exists(args[0]):
+                seed_row = None
+                seed_file = args[0]
+            else:
+                parser.error('seed must be an integer row number or a pkl file containing one record')
     else:
         seed_row = None
+        seed_file = None
 
     parser.destroy()
     
@@ -438,19 +444,24 @@ def main():
     weightedSampGen = createWeightedSamplesGenerator(1000)
 
     scSampGen = createWeightedSamplesGenerator(1)
-    if seed_row is None:
-        df = subDF[subDF.AGE==ageMin]
-        df = df[df.FIPSST == FIPS_DCT['SC']].drop(columns=['AGE', 'FIPSST'])
-        df, _, _, _, dct = quantizeData(df, acesL, boolColL, scalarColL)
-        assert dct == range_d, 'Quantized ranges do not match?'
-        prototype = scSampGen(ageDFD[ageMin])
+    if seed_file is None:
+        if seed_row is None:
+            df = subDF[subDF.AGE==ageMin]
+            df = df[df.FIPSST == FIPS_DCT['SC']].drop(columns=['AGE', 'FIPSST'])
+            df, _, _, _, dct = quantizeData(df, acesL, boolColL, scalarColL)
+            assert dct == range_d, 'Quantized ranges do not match?'
+            prototype = scSampGen(ageDFD[ageMin])
+        else:
+            df = subDF[subDF.AGE==ageMin].drop(columns=['AGE', 'FIPSST'])
+            df = df[df.RECIDX == seed_row]
+            assert df.shape[0] == 1, 'Seed matched %d samples' % df.count()
+            df, _, _, _, dct = quantizeData(df, acesL, boolColL, scalarColL)
+            assert dct == range_d, 'Quantized ranges do not match?'
+            prototype = scSampGen(df)
     else:
-        df = subDF[subDF.AGE==ageMin].drop(columns=['AGE', 'FIPSST'])
-        df = df[df.RECIDX == seed_row]
-        assert df.shape[0] == 1, 'Seed matched %d samples' % df.count()
-        df, _, _, _, dct = quantizeData(df, acesL, boolColL, scalarColL)
-        assert dct == range_d, 'Quantized ranges do not match?'
+        df = pd.read_pickle(seed_file)
         prototype = scSampGen(df)
+        
         
     print('prototype columns: ', prototype.columns)
 
