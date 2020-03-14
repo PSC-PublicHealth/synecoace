@@ -23,7 +23,6 @@ class FreshDrawMutator(Mutator):
         this corresponds to an infinitely wide mutator.
         """
         df = kwargs['df']
-        stepSzV = kwargs['stepSzV']
         return mkSamps(df, len(mutateThisDF))
 
 class MSTMutator(Mutator):
@@ -76,8 +75,8 @@ class MSTMutator(Mutator):
         a proximity network of some sort, so for the moment let's just generate a new set of samples-
         this corresponds to an infinitely wide mutator.
         """
-        df = kwargs['df']
-        assert df is self.df, 'DataFrame is not the one from which this instance was built'
+        if 'df' in kwargs:
+            assert kwargs['df'] is self.df, 'DataFrame is not the one from which this instance was built'
         mutateThisDF = mutateThisDF.set_index('RECIDX', drop=False)
         firstIdxV = None
         idxV = mutateThisDF.index.values

@@ -98,7 +98,7 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
         acceptanceRate: integer vector of acceptance rate for each element of the vectors in A
     """
     # Metropolis-Hastings with nIter iterations.
-    accepted  = np.zeros([nSamp, 1], dtype=np.int)
+    accepted  = np.zeros([nSamp], dtype=np.int).reshape((-1,1))
     onesV = np.ones([nSamp], dtype=np.int).reshape((-1, 1))
     zerosV = np.zeros([nSamp], dtype=np.int).reshape((-1, 1))
     A = [guess]
@@ -110,22 +110,33 @@ def genRawMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator,
         newAlpha = mutator.apply(oldAlpha, **mutatorParams)
         #print('newAlpha: ')
         #print(newAlpha.head())
+        #print(newAlpha.columns)
         newLnLik = lnLikFun(newAlpha, **lnLikParams)
         #print('newLnLik: ', newLnLik)
         if verbose and (n % 100 == 0):
             print('%s: %s' % (n, np.sum(newLnLik)))
         llDelta = newLnLik - oldLnLik
+#         print('raw llDelta: ', llDelta)
         llDelta = np.minimum(llDelta, 0.0)
-        #choices = np.logical_or(newLnLik > oldLnLik, 
-        #                        np.random.random(newLnLik.shape) < np.exp(newLnLik - oldLnLik))
-        choices = np.logical_or(newLnLik > oldLnLik,
-                                np.random.random(newLnLik.shape) < np.exp(llDelta.astype(np.float)))
-        rslt = np.choose(choices, [oldAlpha, newAlpha])
+        choices = np.logical_or(newLnLik > oldLnLik, 
+                                np.random.random(newLnLik.shape) < np.exp(newLnLik - oldLnLik))
+#         print('choices: ', choices)
+#         choices = np.logical_or(newLnLik > oldLnLik,
+#                                 np.random.random(newLnLik.shape) < np.exp(llDelta.astype(np.float)))
+#         rsltDF = pd.DataFrame([n if c else o for
+#                              c, (ni,n), (oi,o) in zip(choices,
+#                                                      newAlpha.iterrows(),
+#                                                      oldAlpha.iterrows())])
+        rslt = np.choose(choices.reshape(-1,1), [oldAlpha, newAlpha])
         rsltDF = pd.DataFrame(rslt, columns=oldAlpha.columns.copy())
         #print('point 1 result: ')
         #print(rsltDF.head())
         A.append(rsltDF)
-        accepted += np.choose(choices, [zerosV, onesV])
+#         print('llDelta: ', llDelta)
+#         print('choices: ', choices)
+#         print('zerosV: ', zerosV)
+        accepted += np.choose(choices.reshape(-1,1), [zerosV, onesV])
+#        print('accepted: ', accepted)
     acceptanceRate = accepted/float(nIter)
     return A, acceptanceRate
 
@@ -186,14 +197,18 @@ def genMetropolisSamples(nSamp, nIter, guess, lnLikFun, lnLikParams, mutator, mu
                 print("Not enough mutations for burn-in; acceptance rate %s; %d discards remain"
                       % (acceptanceRate.min(), burninMutations))
             else:
-                for idx, sV in enumerate(A[burnIn:]):
+                for idx, sV in enumerate(allA[burnIn:]):
                     if idx % keepStep == 0:
                         clean.append(sV)
-                break
+                if clean:
+                    break
+                else:
+                    print("Got %d samples, keepStep %d" % ((len(A) - burnIn), keepStep))
+                    print("Passed burn-in but clean samples are still needed")
         else:
             print("NO GOOD MUTATIONS; acceptance rate %s; continuing"
                   % acceptanceRate.min())
-            print(acceptanceRate.min(), nIter, (acceptanceRate * nIter).min())
+            print("Acceptance params: ", acceptanceRate.min(), nIter, (acceptanceRate * nIter).min())
     return clean
 
 

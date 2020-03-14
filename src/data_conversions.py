@@ -21,7 +21,7 @@ def selectData(fullDF,fipsL=None, includeFips=False):
             'TOTCSHCN', # Total children with special health care needs
             'TOTNONSHCN', # Total children without special health care needs
             'TOTMALE', # Total male children
-            'TOTFEMALE', # Total female childrem
+            'TOTFEMALE', # Total female children
             'K2Q05', # Born 3 weeks before due date (1=yes, 2=no)
             'BIRTHWT_VL', # Birth weight very low (1=yes, 2=no)
             'BIRTHWT_L', # Birth weight low (1=yes, 2=no)

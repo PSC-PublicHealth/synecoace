@@ -5,6 +5,7 @@ import os
 from optparse import OptionParser
 import uuid
 import yaml
+import pickle
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize, differential_evolution
@@ -43,15 +44,6 @@ def select_subset(df, match_dct):
     return df
 
 
-def createWeightSer(colL, range_d, vals=None):
-    if vals is None:
-        wtSer = pd.Series({col:1.0/range_d[col] for col in colL})
-    else:
-        wtSer = pd.Series({col:v for col, v in zip(colL, vals)})
-    #print('wtSer: %s' % wtSer.values)
-    return wtSer
-
-
 # def lnLik(samps1V, samps2V, wtSerV):
 #     """
 #     funV has the right shape to fill the role of likelihood in the Metropolis algorithm.  We'll
@@ -75,28 +67,69 @@ def createWeightSer(colL, range_d, vals=None):
 #     return np.asarray((-np.asmatrix(wtA) * np.asmatrix(delta).transpose())).reshape((-1, 1))
 
 
+# def lnLik(samps1V, samps2V, wtSerV):
+#     """
+#     funV has the right shape to fill the role of likelihood in the Metropolis algorithm.  We'll
+#     take the log, and use it as a log likelihood.
+#     """
+#     try:
+#         wtA = wtSerV.values.astype(np.float)
+#         sub1DF = samps1V[wtSerV.index]
+#         sub1M = sub1DF.values.astype(np.float)
+#         sub2DF = samps2V[wtSerV.index]
+#         sub2M = sub2DF.values.astype(np.float)
+#         rslt = np.einsum('ia,a,ja -> i', sub1M, wtA, sub2M)
+#     except Exception as e:
+#         print('samps1V: ')
+#         print(samps1V)
+#         print('wtSerV.index:')
+#         print(wtSerV.index)
+#         import pdb
+#         pdb.Pdb().set_trace()
+#         raise
+#          
+#     return (1.0/float(sub2M.shape[0])) * rslt.reshape((-1,1))
+
+
 def lnLik(samps1V, samps2V, wtSerV):
     """
     funV has the right shape to fill the role of likelihood in the Metropolis algorithm.  We'll
     take the log, and use it as a log likelihood.
     """
     try:
-        wtA = wtSerV.values.astype(np.float)
+        wtA = wtSerV.values
         sub1DF = samps1V[wtSerV.index]
-        sub1M = sub1DF.values.astype(np.float)
         sub2DF = samps2V[wtSerV.index]
-        sub2M = sub2DF.values.astype(np.float)
-        rslt = np.einsum('ia,a,ja -> i', sub1M, wtA, sub2M)
+        delta = (sub1DF.values - sub2DF.values).astype(np.float)
+#         print('index: ', sub1DF.index)
+#         print('columns: ', sub1DF.columns)
+#         print('shape: ', sub1DF.values.shape)
+#         print(sub1DF.values)
+#         print('FPL column?')
+#         print(sub1DF.values[:,-2])
+        base_fpl_col = sub2DF.values[:,-2]
+        delta_fpl_col = delta[:, -2]
+        delta_fpl_col = np.where(base_fpl_col < 1.0, delta_fpl_col - 0.3, delta_fpl_col)
+        delta[:, -2] = delta_fpl_col
+        delta *= delta
+        rslt = -np.einsum('ij,j -> i', delta, wtA)
+#         print('wtA:')
+#         print(wtA)
+#         print('delta:')
+#         print(delta)
+#         print('rslt: ')
+#         print(rslt)
+        return rslt
     except Exception as e:
         print('samps1V: ')
         print(samps1V)
         print('wtSerV.index:')
         print(wtSerV.index)
-        import pdb
-        pdb.Pdb().set_trace()
         raise
-         
-    return (1.0/float(sub2M.shape[0])) * rslt.reshape((-1,1))
+
+
+def lik(samps1V, samps2V, wtSerV):
+    return np.exp(lnLik(samps1V, samps2V, wtSerV))
 
 
 # This function takes lnLik from the environment!
@@ -106,7 +139,7 @@ def sampleAndCalcMI(wtSer, nSamp, nIter, sampler, testSampParams, genSampParams,
     testSamps = sampler(**testSampParams)
     guess = sampler(**genSampParams)
     lnLikParams = {'samps2V': testSamps, 'wtSerV': wtSer}
-    cleanSamps = genMetropolisSamples(nSamp, nIter, guess, lnLik, lnLikParams,
+    cleanSamps = genMetropolisSamples(nSamp, nIter, guess, lik, lnLikParams,
                                       mutator, mutatorParams, verbose=verbose)
     if isinstance(cleanSamps[0], pd.DataFrame):
         cleanV = pd.concat(cleanSamps)
@@ -139,9 +172,10 @@ def minimizeMe(wtVec,
 
 class Agent(object):
     def __init__(self, prototype, all_samples, samp_gen, fixed_l, aces_l, passive_l,
-                 age, range_d = None, algorithm=None):
+                 age, range_d = None, algorithm=None, opt_dct={}):
         assert algorithm is not None, 'algorithm should be set'
         self.algorithm = algorithm
+        self.opt_dct = opt_dct.copy()
         fixed_d = {elt: prototype.iloc[0][elt] for elt in fixed_l}
         self.fixed_d = fixed_d
         self.samp_gen = samp_gen
@@ -158,13 +192,13 @@ class Agent(object):
         self.open_l = open_l
         self.mutual_info = None
         print('KEYS: ', prototype.index)
-        #self.inner_cohort = samp_gen(prototype)
-        self.inner_cohort = self.gen_samples_using(samp_gen(prototype),
-                                                   self.outer_cohort,
-                                                   MSTMutator(self.outer_cohort),
-                                                   {'nsteps': 2},
-                                                   createWeightSer(self.open_l + self.advancing_l,
-                                                                   range_d=self.range_d))
+        self.inner_cohort = samp_gen(prototype)
+#         self.inner_cohort = self.gen_samples_using(samp_gen(prototype),
+#                                                    self.outer_cohort,
+#                                                    MSTMutator(self.outer_cohort),
+#                                                    {'nsteps': 2},
+#                                                    createWeightSer(self.open_l + self.advancing_l,
+#                                                                    range_d=self.range_d))
         print('initial outer_cohort unique entries: ', get_unique_entries(self.outer_cohort))
         print('initial inner_cohort unique entries: ', get_unique_entries(self.inner_cohort))
     
@@ -266,6 +300,18 @@ class Agent(object):
             mutatorParams = {'nsteps': 2, 'df': new_outer_cohort}
             if self.algorithm == 'fixed':
                 print('------------------')
+                assert 'seed' in self.opt_dct, 'no seed so I cannot find fixed wt_ser values'
+                seed_pth, seed_root = os.path.split(self.opt_dct['seed'])
+                pkl_path = os.path.join(seed_pth,
+                                        'deep_' + seed_root + '_generic_guides',
+                                        '%d-%d_generic.pkl' % (self.age, new_age))
+                print('Opening %s' % pkl_path)
+                with open(pkl_path, 'rb') as f:
+                    stuff = pickle.load(f)
+                    if isinstance(stuff, list):
+                        stuff = stuff[0]
+                    fixed_wts = stuff.x
+                wt_ser = createWeightSer(all_col_l, {}, fixed_wts)
                 print('Using fixed guide function:')
                 print(wt_ser.values)
                 print('------------------')
@@ -353,6 +399,17 @@ def createWeightedSamplesGenerator(n_samp):
             rslt = rslt.drop(columns=['index'])
         return rslt
     return rsltF
+
+
+def createWeightSer(colL, range_d, vals=None):
+    if vals is None:
+        wtSer = pd.Series({col:1.0/(range_d[col] * range_d[col])
+                           for col in colL})
+    else:
+        assert len(vals) == len(colL), 'values do not match col count'
+        wtSer = pd.Series({col:v for col, v in zip(colL, vals)})
+    #print('wtSer: %s' % wtSer.values)
+    return wtSer
 
 
 def get_rslt_path():
@@ -445,6 +502,8 @@ def main():
 
     scSampGen = createWeightedSamplesGenerator(1)
     if seed_file is None:
+        assert opts.alg != 'fixed', 'alg fixed requires a seed file from which to generate data dir name'
+        opt_dct = {}
         if seed_row is None:
             df = subDF[subDF.AGE==ageMin]
             df = df[df.FIPSST == FIPS_DCT['SC']].drop(columns=['AGE', 'FIPSST'])
@@ -461,12 +520,12 @@ def main():
     else:
         df = pd.read_pickle(seed_file)
         prototype = scSampGen(df)
-        
+        opt_dct = {'seed':os.path.splitext(seed_file)[0]}
         
     print('prototype columns: ', prototype.columns)
 
     agent = Agent(prototype, ageDFD[ageMin], weightedSampGen, fixedL, acesL, passiveL,
-                  ageMin, range_d=range_d, algorithm=opts.alg)
+                  ageMin, range_d=range_d, algorithm=opts.alg, opt_dct=opt_dct)
     while agent.age < ageMax:
         new_age = agent.age + 1
         sub_path = os.path.join(rslt_path, '%d_%d' % (agent.age, new_age))
